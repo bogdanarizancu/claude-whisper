@@ -1,6 +1,16 @@
 import * as vscode from 'vscode';
 
 export function activate(context: vscode.ExtensionContext) {
+  const statusBar = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    100
+  );
+  statusBar.text = '$(mic) Talk to Claude';
+  statusBar.tooltip = 'Claude Listen active — Ctrl+Shift+V sends to Claude Code input';
+  statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+  statusBar.command = 'claude-vscode.sidebar.open';
+  statusBar.show();
+
   const disposable = vscode.commands.registerCommand(
     'claude-listen.sendToClaudeCode',
     async () => {
@@ -12,7 +22,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-  context.subscriptions.push(disposable);
+  context.subscriptions.push(statusBar, disposable);
 }
 
 export function deactivate() {}
