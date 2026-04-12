@@ -1,30 +1,31 @@
 {
-  "name": "claude-listen",
-  "displayName": "Claude Listen",
-  "description": "A VSCode extension",
+  "name": "claude-whisper",
+  "displayName": "Claude Whisper",
+  "description": "Record your voice and send the transcription to the Claude Code input box",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
+  "icon": "icon.png",
+  "categories": ["AI", "Chat"],
+  "keywords": ["voice", "speech", "whisper", "transcription", "claude", "dictation", "ai"],
   "repository": {
     "type": "git",
-    "url": "https://github.com/bogdanarizancu/claude-listen"
+    "url": "https://github.com/bogdanarizancu/claude-whisper"
   },
   "activationEvents": ["onStartupFinished"],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "claude-listen.sendToClaudeCode",
-        "title": "Send to Claude Code"
+        "command": "claude-whisper.sendToClaudeCode",
+        "title": "Claude Whisper: Toggle Recording"
       }
     ],
     "keybindings": [
       {
-        "command": "claude-listen.sendToClaudeCode",
+        "command": "claude-whisper.sendToClaudeCode",
         "key": "ctrl+shift+v",
-        "mac": "cmd+shift+v",
         "when": "activeWebviewPanelId == 'claudeVSCodePanel' || (claude-vscode.sideBarActive && !editorFocus && !panelFocus)"
       }
     ]
