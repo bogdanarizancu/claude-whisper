@@ -11,13 +11,21 @@
     "type": "git",
     "url": "https://github.com/bogdanarizancu/claude-listen"
   },
-  "activationEvents": [],
+  "activationEvents": ["onStartupFinished"],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "claude-listen.helloWorld",
-        "title": "Hello World"
+        "command": "claude-listen.sendToClaudeCode",
+        "title": "Send to Claude Code"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "claude-listen.sendToClaudeCode",
+        "key": "ctrl+shift+v",
+        "mac": "cmd+shift+v",
+        "when": "activeWebviewPanelId == 'claudeVSCodePanel' || (claude-vscode.sideBarActive && !editorFocus && !panelFocus)"
       }
     ]
   },
