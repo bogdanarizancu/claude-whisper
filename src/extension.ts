@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-type State = 'idle' | 'recording' | 'transcribing';
+type State = 'idle' | 'recording' | 'transcribing' | 'downloading';
 
 type RecorderConfig = {
   bin: string;
@@ -19,7 +19,7 @@ const RECORDER_CANDIDATES: RecorderConfig[] = [
   },
   {
     bin: 'arecord',
-    args: wav => ['-f', 'S16_LE', '-r', '16000', '-c', '1', '-t', 'wav', wav],
+    args: wav => ['-D', 'plughw:acp6x,0', '-f', 'S16_LE', '-r', '16000', '-c', '1', '-t', 'wav', wav],
   },
   {
     bin: 'pw-record',
@@ -69,39 +69,80 @@ function applyState(statusBar: vscode.StatusBarItem, next: State) {
       statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
       statusBar.command = undefined;
       break;
+    case 'downloading':
+      statusBar.text = '$(loading~spin) Downloading model locally... (one-time step)';
+      statusBar.tooltip = 'Claude Whisper — setting up speech recognition (first run only)';
+      statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+      statusBar.command = undefined;
+      break;
   }
+}
+
+function isModelCached(): boolean {
+  const cacheDir = path.join(os.homedir(), '.cache', 'huggingface', 'hub', 'models--Systran--faster-whisper-small');
+  return fs.existsSync(cacheDir);
 }
 
 function ensureFasterWhisper(storagePath: string): Promise<void> {
   const marker = path.join(storagePath, 'pypackages', 'faster_whisper', '__init__.py');
   if (fs.existsSync(marker)) { return Promise.resolve(); }
 
-  return Promise.resolve(vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: 'Claude Whisper: installing faster-whisper (one-time setup)…',
-      cancellable: false,
-    },
-    () => new Promise<void>((resolve, reject) => {
-      const pypackages = path.join(storagePath, 'pypackages');
-      let err = '';
-      const pip = cp.spawn('python3', ['-m', 'pip', 'install', 'faster-whisper', '--target', pypackages]);
-      pip.stderr.on('data', d => { err += d.toString(); });
-      pip.on('close', code => code === 0 ? resolve() : reject(new Error(err.trim() || `pip exited with code ${code}`)));
-    })
-  ));
+  return new Promise<void>((resolve, reject) => {
+    const pypackages = path.join(storagePath, 'pypackages');
+    let err = '';
+    const pip = cp.spawn('python3', ['-m', 'pip', 'install', 'faster-whisper', '--target', pypackages]);
+    pip.stderr.on('data', d => { err += d.toString(); });
+    pip.on('close', code => code === 0 ? resolve() : reject(new Error(err.trim() || `pip exited with code ${code}`)));
+  });
 }
 
-function transcribe(wavFile: string, storagePath: string, scriptPath: string): Promise<string> {
+async function ensureModelReady(
+  storagePath: string,
+  scriptPath: string,
+  statusBar: vscode.StatusBarItem,
+): Promise<void> {
+  applyState(statusBar, 'downloading');
+  try {
+    await ensureFasterWhisper(storagePath);
+    if (!isModelCached()) {
+      const pypackages = path.join(storagePath, 'pypackages');
+      await new Promise<void>((resolve, reject) => {
+        let err = '';
+        const py = cp.spawn('python3', [scriptPath, '--download', pypackages]);
+        py.stderr.on('data', d => { err += d.toString(); });
+        py.on('close', code => code === 0 ? resolve() : reject(new Error(err.trim() || `python3 exited with code ${code}`)));
+      });
+    }
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Claude Whisper: setup failed — ${err.message}`);
+  } finally {
+    applyState(statusBar, 'idle');
+  }
+}
+
+function transcribe(
+  wavFile: string,
+  storagePath: string,
+  scriptPath: string,
+  onSegment: (text: string) => void,
+): Promise<void> {
   const pypackages = path.join(storagePath, 'pypackages');
   return new Promise((resolve, reject) => {
-    let out = '';
     let err = '';
+    let buf = '';
     const py = cp.spawn('python3', [scriptPath, wavFile, pypackages]);
-    py.stdout.on('data', d => { out += d.toString(); });
+    py.stdout.on('data', d => {
+      buf += d.toString();
+      const lines = buf.split('\n');
+      buf = lines.pop()!; // keep any incomplete line
+      for (const line of lines) {
+        if (line.trim()) { onSegment(line.trim()); }
+      }
+    });
     py.stderr.on('data', d => { err += d.toString(); });
     py.on('close', code => {
-      if (code === 0) { resolve(out.trim()); }
+      if (buf.trim()) { onSegment(buf.trim()); } // flush remainder
+      if (code === 0) { resolve(); }
       else { reject(new Error(err.trim() || `python3 exited with code ${code}`)); }
     });
   });
@@ -120,10 +161,13 @@ export function activate(context: vscode.ExtensionContext) {
   // Detect available recorder eagerly so first keypress has no delay
   detectRecorder().then(r => { recorderConfig = r; }).catch(() => {});
 
+  // Ensure faster-whisper and model are ready before first use
+  ensureModelReady(storagePath, scriptPath, statusBar);
+
   const disposable = vscode.commands.registerCommand(
     'claude-whisper.sendToClaudeCode',
     async () => {
-      if (state === 'transcribing') { return; }
+      if (state === 'transcribing' || state === 'downloading') { return; }
 
       if (state === 'idle') {
         // Resolve recorder if not already detected
@@ -135,6 +179,11 @@ export function activate(context: vscode.ExtensionContext) {
             return;
           }
         }
+
+        // Clear the current input immediately before recording starts
+        await vscode.env.clipboard.writeText('');
+        await vscode.commands.executeCommand('editor.action.selectAll');
+        await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
 
         wavPath = path.join(os.tmpdir(), `claude-whisper-${Date.now()}.wav`);
         applyState(statusBar, 'recording');
@@ -157,12 +206,16 @@ export function activate(context: vscode.ExtensionContext) {
 
         try {
           await ensureFasterWhisper(storagePath);
-          const text = await transcribe(currentWav!, storagePath, scriptPath);
-          if (text) {
-            await vscode.env.clipboard.writeText(text);
-            await vscode.commands.executeCommand('editor.action.selectAll');
-            await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
-          }
+          let pasteQueue = Promise.resolve();
+          let first = true;
+          await transcribe(currentWav!, storagePath, scriptPath, segment => {
+            pasteQueue = pasteQueue.then(async () => {
+              await vscode.env.clipboard.writeText(first ? segment : ' ' + segment);
+              await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
+              first = false;
+            });
+          });
+          await pasteQueue;
         } catch (err: any) {
           vscode.window.showErrorMessage(`Claude Whisper: ${err.message}`);
         } finally {
