@@ -32,6 +32,15 @@ let recorder: cp.ChildProcess | undefined;
 let wavPath: string | undefined;
 let recorderConfig: RecorderConfig | undefined;
 
+// Persistent whisper server — model is loaded once, stays alive
+let whisperServer: cp.ChildProcess | undefined;
+let serverReady = false;
+let serverReadyPromise: Promise<void> = Promise.resolve();
+let serverBuf = '';
+let currentSegmentHandler: ((text: string) => void) | undefined;
+let currentEndResolve: (() => void) | undefined;
+let currentEndReject: ((err: Error) => void) | undefined;
+
 function which(bin: string): Promise<boolean> {
   return new Promise(resolve => {
     const p = cp.spawn('which', [bin]);
@@ -120,37 +129,100 @@ async function ensureModelReady(
   }
 }
 
-function transcribe(
+function startWhisperServer(storagePath: string, scriptPath: string): void {
+  const pypackages = path.join(storagePath, 'pypackages');
+  serverReady = false;
+  serverBuf = '';
+
+  let readyResolve: () => void;
+  serverReadyPromise = new Promise(resolve => { readyResolve = resolve; });
+
+  whisperServer = cp.spawn('python3', [scriptPath, '--serve', pypackages]);
+
+  whisperServer.stdout!.on('data', (d: Buffer) => {
+    serverBuf += d.toString();
+    const lines = serverBuf.split('\n');
+    serverBuf = lines.pop()!;
+    for (const line of lines) {
+      if (!serverReady) {
+        if (line.trim() === 'ready') {
+          serverReady = true;
+          readyResolve();
+        }
+        continue;
+      }
+      if (line.trim() === '---END---') {
+        const resolve = currentEndResolve;
+        currentEndResolve = undefined;
+        currentEndReject = undefined;
+        currentSegmentHandler = undefined;
+        resolve?.();
+      } else if (line.trim()) {
+        currentSegmentHandler?.(line.trim());
+      }
+    }
+  });
+
+  whisperServer.stderr!.on('data', (_d: Buffer) => {
+    // stderr is for errors from the python process — ignore silently
+  });
+
+  whisperServer.on('close', () => {
+    serverReady = false;
+    whisperServer = undefined;
+    const reject = currentEndReject;
+    currentEndResolve = undefined;
+    currentEndReject = undefined;
+    currentSegmentHandler = undefined;
+    reject?.(new Error('Whisper server exited unexpectedly'));
+  });
+}
+
+function transcribeViaServer(
   wavFile: string,
-  storagePath: string,
-  scriptPath: string,
   onSegment: (text: string) => void,
 ): Promise<void> {
-  const pypackages = path.join(storagePath, 'pypackages');
   return new Promise((resolve, reject) => {
-    let err = '';
-    let buf = '';
-    const py = cp.spawn('python3', [scriptPath, wavFile, pypackages]);
-    py.stdout.on('data', d => {
-      buf += d.toString();
-      const lines = buf.split('\n');
-      buf = lines.pop()!; // keep any incomplete line
-      for (const line of lines) {
-        if (line.trim()) { onSegment(line.trim()); }
-      }
-    });
-    py.stderr.on('data', d => { err += d.toString(); });
-    py.on('close', code => {
-      if (buf.trim()) { onSegment(buf.trim()); } // flush remainder
-      if (code === 0) { resolve(); }
-      else { reject(new Error(err.trim() || `python3 exited with code ${code}`)); }
-    });
+    if (!whisperServer || !serverReady) {
+      reject(new Error('Whisper server not ready'));
+      return;
+    }
+    currentSegmentHandler = onSegment;
+    currentEndResolve = resolve;
+    currentEndReject = reject;
+    whisperServer.stdin!.write(wavFile + '\n');
   });
+}
+
+function checkInotifyLimit() {
+  if (process.platform !== 'linux') { return; }
+  try {
+    const val = parseInt(fs.readFileSync('/proc/sys/fs/inotify/max_user_watches', 'utf8').trim(), 10);
+    if (val < 524288) {
+      vscode.window.showWarningMessage(
+        `Claude Whisper: your inotify watch limit is low (${val}). VS Code may warn "Unable to watch for file changes". ` +
+        'Run this to fix it permanently:\n' +
+        'echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf && sudo sysctl -p',
+        'Copy fix command',
+      ).then(choice => {
+        if (choice === 'Copy fix command') {
+          vscode.env.clipboard.writeText(
+            'echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf && sudo sysctl -p'
+          );
+          vscode.window.showInformationMessage('Command copied — paste it in a terminal and run it.');
+        }
+      });
+    }
+  } catch {
+    // /proc not readable — ignore
+  }
 }
 
 export function activate(context: vscode.ExtensionContext) {
   const storagePath = context.globalStorageUri.fsPath;
   fs.mkdirSync(storagePath, { recursive: true });
+
+  checkInotifyLimit();
 
   const scriptPath = path.join(context.extensionPath, 'scripts', 'transcribe.py');
 
@@ -161,8 +233,10 @@ export function activate(context: vscode.ExtensionContext) {
   // Detect available recorder eagerly so first keypress has no delay
   detectRecorder().then(r => { recorderConfig = r; }).catch(() => {});
 
-  // Ensure faster-whisper and model are ready before first use
-  ensureModelReady(storagePath, scriptPath, statusBar);
+  // Ensure faster-whisper and model are ready, then start the persistent server
+  ensureModelReady(storagePath, scriptPath, statusBar).then(() => {
+    startWhisperServer(storagePath, scriptPath);
+  });
 
   const disposable = vscode.commands.registerCommand(
     'claude-whisper.sendToClaudeCode',
@@ -206,9 +280,11 @@ export function activate(context: vscode.ExtensionContext) {
 
         try {
           await ensureFasterWhisper(storagePath);
+          // Wait for the server to be ready (almost always already resolved)
+          await serverReadyPromise;
           let pasteQueue = Promise.resolve();
           let first = true;
-          await transcribe(currentWav!, storagePath, scriptPath, segment => {
+          await transcribeViaServer(currentWav!, segment => {
             pasteQueue = pasteQueue.then(async () => {
               await vscode.env.clipboard.writeText(first ? segment : ' ' + segment);
               await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
@@ -230,6 +306,7 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+  whisperServer?.kill('SIGTERM');
   recorder?.kill('SIGTERM');
   if (wavPath && fs.existsSync(wavPath)) { fs.unlinkSync(wavPath); }
 }

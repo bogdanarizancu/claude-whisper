@@ -41,6 +41,18 @@ Subsequent uses are fast — no downloads, no setup.
 
 Open the Keyboard Shortcuts editor (`Ctrl+K Ctrl+S`), search for **Claude Whisper: Toggle Recording**, and assign any key combination you prefer.
 
+## Troubleshooting
+
+### "Unable to watch for file changes" (Linux)
+
+VS Code shows this warning when the system's inotify watch limit is too low. Claude Whisper detects this at startup and will prompt you with a fix. If you see the notification, click **Copy fix command**, paste it into a terminal, and run it:
+
+```bash
+echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf && sudo sysctl -p
+```
+
+This is a standard Linux system tuning setting — not specific to this extension. It tells the kernel to allow more file watchers, which VS Code needs on larger projects. The change persists across reboots.
+
 ## Privacy
 
 All processing is local. Your audio is never sent to any server — transcription runs entirely on your machine using the Whisper model.
