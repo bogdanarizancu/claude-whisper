@@ -109,7 +109,7 @@ async function ensureModelReady(
   storagePath: string,
   scriptPath: string,
   statusBar: vscode.StatusBarItem,
-): Promise<void> {
+): Promise<boolean> {
   applyState(statusBar, 'downloading');
   try {
     await ensureFasterWhisper(storagePath);
@@ -122,8 +122,10 @@ async function ensureModelReady(
         py.on('close', code => code === 0 ? resolve() : reject(new Error(err.trim() || `python3 exited with code ${code}`)));
       });
     }
+    return true;
   } catch (err: any) {
     vscode.window.showErrorMessage(`Claude Whisper: setup failed — ${err.message}`);
+    return false;
   } finally {
     applyState(statusBar, 'idle');
   }
@@ -157,6 +159,12 @@ function startWhisperServer(storagePath: string, scriptPath: string): void {
         currentEndReject = undefined;
         currentSegmentHandler = undefined;
         resolve?.();
+      } else if (line.startsWith('---ERROR---')) {
+        const reject = currentEndReject;
+        currentEndResolve = undefined;
+        currentEndReject = undefined;
+        currentSegmentHandler = undefined;
+        reject?.(new Error(line.slice('---ERROR---'.length).trim()));
       } else if (line.trim()) {
         currentSegmentHandler?.(line.trim());
       }
@@ -164,7 +172,7 @@ function startWhisperServer(storagePath: string, scriptPath: string): void {
   });
 
   whisperServer.stderr!.on('data', (_d: Buffer) => {
-    // stderr is for errors from the python process — ignore silently
+    // stderr from the python process — ignore silently
   });
 
   whisperServer.on('close', () => {
@@ -234,9 +242,37 @@ export function activate(context: vscode.ExtensionContext) {
   detectRecorder().then(r => { recorderConfig = r; }).catch(() => {});
 
   // Ensure faster-whisper and model are ready, then start the persistent server
-  ensureModelReady(storagePath, scriptPath, statusBar).then(() => {
-    startWhisperServer(storagePath, scriptPath);
+  ensureModelReady(storagePath, scriptPath, statusBar).then(ok => {
+    if (ok) { startWhisperServer(storagePath, scriptPath); }
   });
+
+  // Shared transcription logic — called from both auto-stop and manual keypress
+  async function doTranscribe(currentWav: string) {
+    applyState(statusBar, 'transcribing');
+
+    // Give the recorder a moment to flush and close the WAV header
+    await new Promise<void>(resolve => global.setTimeout(resolve, 300));
+
+    try {
+      await ensureFasterWhisper(storagePath);
+      await serverReadyPromise;
+      let pasteQueue = Promise.resolve();
+      let first = true;
+      await transcribeViaServer(currentWav, segment => {
+        pasteQueue = pasteQueue.then(async () => {
+          await vscode.env.clipboard.writeText(first ? segment : ' ' + segment);
+          await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
+          first = false;
+        });
+      });
+      await pasteQueue;
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Claude Whisper: ${err.message}`);
+    } finally {
+      if (fs.existsSync(currentWav)) { fs.unlinkSync(currentWav); }
+      applyState(statusBar, 'idle');
+    }
+  }
 
   const disposable = vscode.commands.registerCommand(
     'claude-whisper.sendToClaudeCode',
@@ -254,50 +290,23 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
 
-        // Clear the current input immediately before recording starts
-        await vscode.env.clipboard.writeText('');
-        await vscode.commands.executeCommand('editor.action.selectAll');
-        await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
-
         wavPath = path.join(os.tmpdir(), `claude-whisper-${Date.now()}.wav`);
         applyState(statusBar, 'recording');
         recorder = cp.spawn(recorderConfig.bin, recorderConfig.args(wavPath));
+
         recorder.on('error', err => {
           vscode.window.showErrorMessage(`Claude Whisper: recording failed — ${err.message}`);
           applyState(statusBar, 'idle');
           wavPath = undefined;
         });
+
       } else {
-        // recording → transcribing
-        const currentWav = wavPath;
-        applyState(statusBar, 'transcribing');
+        // Manual stop (second keypress) — kill recorder, transcribe immediately
+        const currentWav = wavPath!;
         recorder?.kill('SIGTERM');
         recorder = undefined;
         wavPath = undefined;
-
-        // Give the recorder a moment to flush and close the WAV header
-        await new Promise<void>(resolve => global.setTimeout(resolve, 300));
-
-        try {
-          await ensureFasterWhisper(storagePath);
-          // Wait for the server to be ready (almost always already resolved)
-          await serverReadyPromise;
-          let pasteQueue = Promise.resolve();
-          let first = true;
-          await transcribeViaServer(currentWav!, segment => {
-            pasteQueue = pasteQueue.then(async () => {
-              await vscode.env.clipboard.writeText(first ? segment : ' ' + segment);
-              await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
-              first = false;
-            });
-          });
-          await pasteQueue;
-        } catch (err: any) {
-          vscode.window.showErrorMessage(`Claude Whisper: ${err.message}`);
-        } finally {
-          if (currentWav && fs.existsSync(currentWav)) { fs.unlinkSync(currentWav); }
-          applyState(statusBar, 'idle');
-        }
+        doTranscribe(currentWav);
       }
     }
   );

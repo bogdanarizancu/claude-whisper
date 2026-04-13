@@ -1,7 +1,6 @@
 {
   "name": "claude-whisper",
   "publisher": "bogdan-arizancu",
-  "version": "1.0.0",
   "displayName": "Claude Whisper",
   "description": "Record your voice and send the transcription to the Claude Code input box",
   "version": "0.0.1",

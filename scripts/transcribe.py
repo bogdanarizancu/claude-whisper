@@ -14,9 +14,9 @@ def load_model(pypackages):
     sys.path.insert(0, pypackages)
     from faster_whisper import WhisperModel
     try:
-        return WhisperModel("base", device="cpu", compute_type="int8", local_files_only=True)
+        return WhisperModel("small", device="cpu", compute_type="int8", local_files_only=True)
     except Exception:
-        return WhisperModel("base", device="cpu", compute_type="int8")
+        return WhisperModel("small", device="cpu", compute_type="int8")
 
 
 def transcribe_file(model, wav_path):
@@ -52,8 +52,7 @@ if mode == "--serve":
         try:
             transcribe_file(model, wav_path)
         except Exception as e:
-            sys.stderr.write(f"transcription error: {e}\n")
-            sys.stderr.flush()
+            print(f"---ERROR--- {e}", flush=True)
         print("---END---", flush=True)
     sys.exit(0)
 
