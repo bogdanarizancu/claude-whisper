@@ -8,6 +8,7 @@ Modes:
   <wav_path> <pypackages>          legacy single-shot mode (fallback)
 """
 import sys
+import wave
 
 
 def load_model(pypackages):
@@ -20,8 +21,15 @@ def load_model(pypackages):
 
 
 def transcribe_file(model, wav_path):
+    import numpy as np
+    # Read WAV as float32 and pad with 500ms silence so Whisper doesn't cut the last word
+    with wave.open(wav_path, 'rb') as w:
+        frames = w.readframes(w.getnframes())
+    audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+    audio = np.concatenate([audio, np.zeros(8000, dtype=np.float32)])  # 500ms at 16kHz
+
     segments, _ = model.transcribe(
-        wav_path,
+        audio,
         language="en",
         beam_size=3,
         best_of=5,

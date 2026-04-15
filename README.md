@@ -1,6 +1,10 @@
 # Claude Whisper
 
-Record your voice and send the transcription directly into the [Claude Code](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code) input box.
+Speak your prompts instead of typing them — Claude Whisper records your voice and pastes the transcription directly into the [Claude Code](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code) chat input, keeping you in flow without switching context.
+
+> **Linux only** — macOS and Windows support coming soon.
+
+![Claude Whisper demo](./screencast.gif)
 
 ## How it works
 
@@ -8,14 +12,6 @@ Press `Ctrl+Shift+V` while the Claude Code input is focused to toggle recording:
 
 1. **First press** — starts recording from your microphone
 2. **Second press** — stops recording, transcribes speech to text, and pastes the result into Claude Code
-
-## Platform support
-
-| Platform | Status |
-|---|---|
-| Linux | Supported |
-| macOS | Coming soon |
-| Windows | Coming soon |
 
 ## Requirements
 
@@ -33,7 +29,7 @@ Most Linux desktop systems already have at least one of these installed.
 On first use, Claude Whisper will:
 
 1. **Install `faster-whisper`** into the extension's private storage (`~/.config/Code/User/globalStorage/...`). This is a one-time setup that takes ~30 seconds and requires an internet connection.
-2. **Download the Whisper `tiny` speech model** (~150 MB) to `~/.cache/huggingface/hub/`. This also happens once and is cached permanently.
+2. **Download the Whisper `small` speech model** (~460 MB) to `~/.cache/huggingface/hub/`. This also happens once and is cached permanently.
 
 Subsequent uses are fast — no downloads, no setup.
 
@@ -52,6 +48,10 @@ echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf && sudo s
 ```
 
 This is a standard Linux system tuning setting — not specific to this extension. It tells the kernel to allow more file watchers, which VS Code needs on larger projects. The change persists across reboots.
+
+## Why this exists
+
+The Claude Code VS Code extension has no built-in voice input. Claude Whisper fills that gap — audio is recorded locally, transcribed on your machine with Whisper, and inserted directly into the Claude Code input without any copy-paste step.
 
 ## Privacy
 

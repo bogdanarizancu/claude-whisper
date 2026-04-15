@@ -3,10 +3,11 @@
   "publisher": "bogdan-arizancu",
   "displayName": "Claude Whisper",
   "description": "Record your voice and send the transcription to the Claude Code input box",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "engines": {
     "vscode": "^1.85.0"
   },
+  "license": "MIT",
   "icon": "icon.png",
   "categories": ["AI", "Chat"],
   "keywords": ["voice", "speech", "whisper", "transcription", "claude", "dictation", "ai"],

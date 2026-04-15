@@ -253,19 +253,23 @@ export function activate(context: vscode.ExtensionContext) {
     // Give the recorder a moment to flush and close the WAV header
     await new Promise<void>(resolve => global.setTimeout(resolve, 300));
 
-    try {
+   try {
       await ensureFasterWhisper(storagePath);
       await serverReadyPromise;
+      const saved = await vscode.env.clipboard.readText();
       let pasteQueue = Promise.resolve();
       let first = true;
       await transcribeViaServer(currentWav, segment => {
         pasteQueue = pasteQueue.then(async () => {
           await vscode.env.clipboard.writeText(first ? segment : ' ' + segment);
+          await vscode.commands.executeCommand('claude-vscode.focus');
           await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
+          await new Promise(r => setTimeout(r, 100));
           first = false;
         });
       });
       await pasteQueue;
+      await vscode.env.clipboard.writeText(saved);
     } catch (err: any) {
       vscode.window.showErrorMessage(`Claude Whisper: ${err.message}`);
     } finally {
@@ -289,7 +293,6 @@ export function activate(context: vscode.ExtensionContext) {
             return;
           }
         }
-
         wavPath = path.join(os.tmpdir(), `claude-whisper-${Date.now()}.wav`);
         applyState(statusBar, 'recording');
         recorder = cp.spawn(recorderConfig.bin, recorderConfig.args(wavPath));
