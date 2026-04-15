@@ -3,14 +3,14 @@
   "publisher": "bogdan-arizancu",
   "displayName": "Claude Whisper",
   "description": "Record your voice and send the transcription to the Claude Code input box",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "engines": {
     "vscode": "^1.85.0"
   },
   "license": "MIT",
   "icon": "icon.png",
-  "categories": ["AI", "Chat"],
-  "keywords": ["voice", "speech", "whisper", "transcription", "claude", "dictation", "ai"],
+  "categories": ["AI", "Chat", "Other"],
+  "keywords": ["voice", "speech", "whisper", "transcription", "claude", "dictation", "ai", "speech-to-text", "stt", "microphone"],
   "repository": {
     "type": "git",
     "url": "https://github.com/bogdanarizancu/claude-whisper"

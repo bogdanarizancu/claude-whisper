@@ -261,7 +261,7 @@ export function activate(context: vscode.ExtensionContext) {
       let first = true;
       await transcribeViaServer(currentWav, segment => {
         pasteQueue = pasteQueue.then(async () => {
-          await vscode.env.clipboard.writeText(first ? segment : ' ' + segment);
+          await vscode.env.clipboard.writeText((first ? segment : ' ' + segment) + ' ');
           await vscode.commands.executeCommand('claude-vscode.focus');
           await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
           await new Promise(r => setTimeout(r, 100));
@@ -304,12 +304,15 @@ export function activate(context: vscode.ExtensionContext) {
         });
 
       } else {
-        // Manual stop (second keypress) — kill recorder, transcribe immediately
+        // Manual stop (second keypress) — wait 300ms so the tail of speech is captured
         const currentWav = wavPath!;
-        recorder?.kill('SIGTERM');
+        const currentRecorder = recorder;
         recorder = undefined;
         wavPath = undefined;
-        doTranscribe(currentWav);
+        global.setTimeout(() => {
+          currentRecorder?.kill('SIGTERM');
+          doTranscribe(currentWav);
+        }, 300);
       }
     }
   );
